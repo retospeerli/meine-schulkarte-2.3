@@ -4,6 +4,9 @@
 export const MUNICIPAL_LAYER='ch.swisstopo.swissboundaries3d-gemeinde-flaeche.fill';
 export const CANTON_LAYER='ch.swisstopo.swissboundaries3d-kanton-flaeche.fill';
 export const WATER_LAYER='ch.swisstopo.swisstlm3d-gewaessernetz';
+// The federal BAFU lake layer provides actual *areas*, unlike many
+// swissTLM3D Gewaessernetz features, which are lake shore *lines*.
+export const LAKE_AREA_LAYER='ch.bafu.vec25-seen';
 export const CANTONS=Object.freeze([
  ['AG','Aargau'],['AI','Appenzell Innerrhoden'],['AR','Appenzell Ausserrhoden'],
  ['BE','Bern'],['BL','Basel-Landschaft'],['BS','Basel-Stadt'],['FR','Freiburg'],
@@ -47,12 +50,15 @@ function closeLoop(ring){
   return out;
 }
 function pointOnSegment(p,a,b,eps=1e-9){
-  const cross=(b[0]-a[0])*(p[1]-a[1])-(b[1]-a[1])*(p[0]-a[0]);
-  if(Math.abs(cross)>eps)return false;
-  const dot=(p[0]-a[0])*(b[0]-a[0])+(p[1]-a[1])*(b[1]-a[1]);
-  if(dot<-eps)return false;
-  const len2=(b[0]-a[0])**2+(b[1]-a[1])**2;
-  return dot<=len2+eps;
+  const dx=b[0]-a[0],dy=b[1]-a[1];
+  const len2=dx*dx+dy*dy;
+  // A closed polygon contains a duplicate first/last vertex: the degenerate
+  // segment must NOT report every point on Earth as being on its boundary.
+  if(len2<=eps*eps)return (p[0]-a[0])**2+(p[1]-a[1])**2<=eps*eps;
+  const cross=dx*(p[1]-a[1])-dy*(p[0]-a[0]);
+  if(Math.abs(cross)>eps*Math.sqrt(len2))return false;
+  const dot=(p[0]-a[0])*dx+(p[1]-a[1])*dy;
+  return dot>=-eps&&dot<=len2+eps;
 }
 function orient(a,b,c){return Math.sign((b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]));}
 function segmentsIntersect(a,b,c,d){
@@ -66,8 +72,8 @@ function segmentsIntersect(a,b,c,d){
 function pointInRing(point,ring){
   const pts=closeLoop(ring); if(pts.length<4)return false;
   let inside=false;
-  for(let i=0,j=pts.length-1;i<pts.length;j=i++){
-    const a=pts[i],b=pts[j];
+  for(let i=0;i<pts.length-1;i++){
+    const a=pts[i],b=pts[i+1];
     if(pointOnSegment(point,a,b))return true;
     const intersect=((a[1]>point[1])!==(b[1]>point[1])) &&
       (point[0] < (b[0]-a[0])*(point[1]-a[1])/(b[1]-a[1]||Number.EPSILON)+a[0]);
@@ -95,18 +101,60 @@ function polygonArea(poly){
   return Math.max(0,area);
 }
 export function geometryArea(geom){return geom.coordinates.reduce((sum,poly)=>sum+polygonArea(poly),0);}
-export function geometriesTouchOrOverlap(a,b){
-  if(!boundsIntersect(a.bounds,b.bounds))return false;
-  for(const pa of a.coordinates)for(const ra of pa){
-    const A=closeLoop(ra);
-    for(const pb of b.coordinates)for(const rb of pb){
-      const B=closeLoop(rb);
-      for(let i=0;i<A.length-1;i++)for(let j=0;j<B.length-1;j++)if(segmentsIntersect(A[i],A[i+1],B[j],B[j+1]))return true;
+/** Tests overlap or shoreline adjacency. At a municipal water boundary,
+ * independently surveyed datasets can differ by some metres. */
+function distPointSegment2(p,u,v){
+  const dx=v[0]-u[0],dy=v[1]-u[1],ll=dx*dx+dy*dy;
+  const t=ll?Math.max(0,Math.min(1,((p[0]-u[0])*dx+(p[1]-u[1])*dy)/ll)):0;
+  const x=u[0]+t*dx,y=u[1]+t*dy;return (p[0]-x)**2+(p[1]-y)**2;
+}
+function geometrySegments(geom){
+  const segments=[];
+  for(const poly of geom.coordinates)for(const ring of poly){
+    for(let i=0;i<ring.length-1;i++){
+      const u=ring[i],v=ring[i+1];
+      segments.push({u,v,minE:Math.min(u[0],v[0]),maxE:Math.max(u[0],v[0]),minN:Math.min(u[1],v[1]),maxN:Math.max(u[1],v[1])});
     }
   }
-  const sampleA=a.coordinates[0]?.[0]?.[0],sampleB=b.coordinates[0]?.[0]?.[0];
-  if(sampleA&&geometryContainsPoint(b,sampleA))return true;
-  if(sampleB&&geometryContainsPoint(a,sampleB))return true;
+  return segments;
+}
+/** Overlap or near-contact, accelerated using a temporary segment grid. */
+export function geometriesTouchOrOverlap(a,b,tolerance=0){
+  const A=a.bounds,B=b.bounds,tol=Math.max(0,Number(tolerance)||0);
+  if(A.maxE+tol<B.minE||B.maxE+tol<A.minE||A.maxN+tol<B.minN||B.maxN+tol<A.minN)return false;
+  // Very common case: a lake lies partly or wholly within the municipality.
+  for(const pa of a.coordinates)for(const r of pa)if(r.length&&geometryContainsPoint(b,r[0]))return true;
+  for(const pb of b.coordinates)for(const r of pb)if(r.length&&geometryContainsPoint(a,r[0]))return true;
+  const left=geometrySegments(a),right=geometrySegments(b);
+  const cell=Math.max(100,Math.min(1000,Math.max(B.maxE-B.minE,B.maxN-B.minN)/40));
+  const grid=new Map();
+  const cells=seg=>{
+    const xmin=Math.floor((seg.minE-tol)/cell),xmax=Math.floor((seg.maxE+tol)/cell);
+    const ymin=Math.floor((seg.minN-tol)/cell),ymax=Math.floor((seg.maxN+tol)/cell);
+    const result=[];
+    for(let y=ymin;y<=ymax;y++)for(let x=xmin;x<=xmax;x++)result.push(`${x}:${y}`);
+    return result;
+  };
+  right.forEach((seg,i)=>{
+    for(const k of cells(seg)){
+      if(!grid.has(k))grid.set(k,[]);
+      grid.get(k).push(i);
+    }
+  });
+  const tol2=tol*tol;
+  for(const one of left){
+    const visited=new Set();
+    for(const k of cells(one))for(const i of grid.get(k)||[]){
+      if(visited.has(i))continue;visited.add(i);
+      const two=right[i];
+      if(one.maxE+tol<two.minE||one.minE-tol>two.maxE||one.maxN+tol<two.minN||one.minN-tol>two.maxN)continue;
+      if(segmentsIntersect(one.u,one.v,two.u,two.v))return true;
+      if(tol && Math.min(
+        distPointSegment2(one.u,two.u,two.v),distPointSegment2(one.v,two.u,two.v),
+        distPointSegment2(two.u,one.u,one.v),distPointSegment2(two.v,one.u,one.v)
+      )<=tol2)return true;
+    }
+  }
   return false;
 }
 function waterNameAndType(attrs,hit){
@@ -119,9 +167,13 @@ function waterNameAndType(attrs,hit){
 }
 function isLakeLike(attrs,geom,hit){
   const {name,type}=waterNameAndType(attrs,hit);
-  const text=`${name} ${type}`.toLocaleLowerCase('de-CH');
-  if(/\b(see|lac|lago|lake|reservoir|weiher|teich|bassin|laghetto)\b/.test(text))return {ok:true,name};
-  if(/\b(fluss|bach|river|stream|fliess|kanal|suone)\b/.test(text))return {ok:false,name};
+  const typeText=type.toLocaleLowerCase('de-CH');
+  const nameText=name.toLocaleLowerCase('de-CH');
+  // The object class is authoritative: a broad river polygon is not a lake.
+  if(/fliess|fluss|bach|river|stream|kanal|suone/.test(typeText))return {ok:false,name};
+  if(/stehend|seeufer|see|lake|lac|lago|weiher|teich/.test(typeText))return {ok:true,name};
+  if(/(?:see|weiher|teich|laghetto|reservoir)$|\b(?:lac|lago|lake|bassin)\b/.test(nameText))return {ok:true,name};
+  if(/(?:bach|fluss|kanal)$/.test(nameText))return {ok:false,name};
   return {ok:geometryArea(geom)>=LAKE_MIN_AREA_M2,name};
 }
 export function mergeGeometries(geometries=[]){
@@ -133,6 +185,14 @@ export function mergeGeometries(geometries=[]){
     maxE=Math.max(maxE,g.bounds.maxE);maxN=Math.max(maxN,g.bounds.maxN);
   }
   return {type:'MultiPolygon',coordinates,bounds:{minE,minN,maxE,maxN},points};
+}
+
+/** Each polygon source must be clipped separately. A concatenated MultiPolygon
+ * with evenodd would XOR overlapping lake and municipality polygons. */
+export function highlightParts(region){
+  if(!region)return [];
+  if(Array.isArray(region.lakeGeometries))return [region.geometry,...region.lakeGeometries].filter(Boolean);
+  return [region.maskGeometry||region.geometry].filter(Boolean);
 }
 
 /** Normalisiert die echten SearchServer-Felder. layerBodId und featureId sind optional. */
@@ -181,25 +241,87 @@ export function parseFindRegionResults(data,kind='gemeinde',term=''){
     return Number(exactB)-Number(exactA)||a.name.localeCompare(b.name,'de-CH');
   }).map(({id,name,origin})=>({id,name,origin}));
 }
-function parseWaterIdentifyResults(data,regionGeom){
+function toWaterPolygon(raw){
+  if(!raw)return null;
+  if(raw.type==='Polygon'||raw.type==='MultiPolygon')return normalizeGeometry(raw);
+  // The official swissTLM3D hydro layer may yield a CLOSED shoreline as a line.
+  // Convert only a truly closed perimeter; never guess across an open river line.
+  const lines=raw.type==='LineString'?[raw.coordinates]:raw.type==='MultiLineString'?raw.coordinates:[];
+  const polygons=[];
+  for(const line of lines){
+    if(!Array.isArray(line)||line.length<4)continue;
+    const first=line[0],last=line[line.length-1];
+    if(Math.hypot(first[0]-last[0],first[1]-last[1])>8)continue;
+    const closed=line.map(p=>[p[0],p[1]]);
+    closed[closed.length-1]=[first[0],first[1]];
+    polygons.push([closed]);
+  }
+  return polygons.length?normalizeGeometry({type:'MultiPolygon',coordinates:polygons}):null;
+}
+export function parseWaterIdentifyResults(data,regionGeom,layer){
   const items=[];
   for(const hit of data?.results||[]){
-    if(hit.layerBodId && hit.layerBodId!==WATER_LAYER)continue;
-    const rawGeom=geometryFromFeatureLike(hit); if(!rawGeom)continue;
-    let geom; try{geom=normalizeGeometry(rawGeom);}catch{continue;}
-    if(!geometriesTouchOrOverlap(regionGeom,geom))continue;
+    if(hit.layerBodId&&hit.layerBodId!==layer)continue;
+    const rawGeom=geometryFromFeatureLike(hit);if(!rawGeom)continue;
+    let geom;try{geom=toWaterPolygon(rawGeom);}catch{continue;}
+    if(!geom)continue;
     const attrs=attrsFromFeatureLike(hit);
-    const lake=isLakeLike(attrs,geom,hit); if(!lake.ok)continue;
-    items.push({name:lake.name||'',geometry:geom,area:geometryArea(geom)});
+    if(layer===WATER_LAYER){
+      const lake=isLakeLike(attrs,geom,hit);if(!lake.ok)continue;
+    }
+    // Area source is already restricted to standing lakes; keep small lakes too.
+    if(!geometriesTouchOrOverlap(regionGeom,geom,35))continue;
+    const name=waterNameAndType(attrs,hit).name;
+    items.push({name,geometry:geom,area:geometryArea(geom),source:layer});
   }
-  const unique=[];
-  const seen=new Set();
-  for(const item of items.sort((a,b)=>b.area-a.area)){
-    const k=`${item.name}|${Math.round(item.area)}|${item.geometry.bounds.minE}|${item.geometry.bounds.minN}|${item.geometry.bounds.maxE}|${item.geometry.bounds.maxN}`;
-    if(seen.has(k))continue;
-    seen.add(k); unique.push(item);
+  return items;
+}
+function bboxTiles(b,maxSide=6500){
+  const pad=60,minE=b.minE-pad,maxE=b.maxE+pad,minN=b.minN-pad,maxN=b.maxN+pad;
+  const nx=Math.ceil((maxE-minE)/maxSide),ny=Math.ceil((maxN-minN)/maxSide);
+  if(nx*ny>60)throw new Error('Gemeinde zu gross für den Browser-Abruf der Seegeometrien.');
+  const tiles=[];
+  for(let y=0;y<ny;y++)for(let x=0;x<nx;x++)tiles.push({
+    minE:minE+(maxE-minE)*x/nx,maxE:minE+(maxE-minE)*(x+1)/nx,
+    minN:minN+(maxN-minN)*y/ny,maxN:minN+(maxN-minN)*(y+1)/ny
+  });
+  return tiles;
+}
+async function identifyWaterFeatures(layer,tile,signal){
+  const params=new URLSearchParams({
+    layers:`all:${layer}`,
+    geometryType:'esriGeometryEnvelope',
+    geometry:`${tile.minE},${tile.minN},${tile.maxE},${tile.maxN}`,
+    mapExtent:`${tile.minE},${tile.minN},${tile.maxE},${tile.maxN}`,
+    imageDisplay:'1200,1200,96',tolerance:'0',
+    returnGeometry:'true',geometryFormat:'geojson',sr:'2056',limit:'200'
+  });
+  const results=[];
+  for(let page=0;page<4;page++){
+    if(signal?.aborted)throw new DOMException('Abgebrochen','AbortError');
+    params.set('offset',String(page*200));
+    const data=await jsonRequest(`${API}MapServer/identify?${params}`,signal);
+    const batch=Array.isArray(data?.results)?data.results:[];
+    results.push(...batch);
+    if(batch.length<200)return results;
   }
-  return unique;
+  throw new Error('Mehr als 800 Gewässerobjekte im Teilgebiet; Abruf begrenzt.');
+}
+function boundsOverlap(a,b,tol=20){
+  return a.maxE+tol>=b.minE&&b.maxE+tol>=a.minE&&a.maxN+tol>=b.minN&&b.maxN+tol>=a.minN;
+}
+function dedupeLakes(items){
+  const result=[];
+  // Prefer the more detailed, recent swissTLM polygon if it is available.
+  for(const item of items.sort((a,b)=>Number(b.source===WATER_LAYER)-Number(a.source===WATER_LAYER))){
+    if(result.some(old=>
+      boundsOverlap(item.geometry.bounds,old.geometry.bounds)&&
+      geometriesTouchOrOverlap(item.geometry,old.geometry)&&
+      ((item.name&&old.name&&key(item.name)===key(old.name))||
+       Math.abs(item.area-old.area)<Math.max(item.area,old.area)*.35)))continue;
+    result.push(item);
+  }
+  return result;
 }
 async function jsonRequest(url,signal){
   const response=await fetch(url,{signal});
@@ -233,23 +355,35 @@ export async function getRegionGeometry(id,kind='gemeinde',signal){
   const feature=data.feature||data.features?.[0]||data;
   return normalizeGeometry(feature.geometry);
 }
+/** Retrieve lake SURFACE polygons, not merely water/shoreline centrelines.
+ * Split municipal bbox to avoid identify's 50-result default and use limit+offset.
+ * Falls back to the other official layer when one service fails. */
 export async function getAdjacentLakeGeometry(regionGeom,signal){
-  const b=regionGeom.bounds;
-  const params=new URLSearchParams({
-    layers:`all:${WATER_LAYER}`,
-    geometryType:'esriGeometryEnvelope',
-    geometry:`${b.minE},${b.minN},${b.maxE},${b.maxN}`,
-    mapExtent:`${b.minE},${b.minN},${b.maxE},${b.maxN}`,
-    imageDisplay:'1200,1200,96',
-    tolerance:'0',
-    returnGeometry:'true',
-    geometryFormat:'geojson',
-    sr:'2056'
-  });
-  const data=await jsonRequest(`${API}MapServer/identify?${params}`,signal);
-  const lakes=parseWaterIdentifyResults(data,regionGeom);
-  if(!lakes.length)return {geometry:null,lakes:[]};
-  return {geometry:mergeGeometries(lakes.map(x=>x.geometry)),lakes:lakes.map(x=>x.name).filter(Boolean)};
+  const tiles=bboxTiles(regionGeom.bounds);
+  const candidates=[],warnings=[];
+  for(const layer of [LAKE_AREA_LAYER,WATER_LAYER]){
+    let hadSuccess=false;
+    // Sequential requests keep load bounded and behave better with public APIs.
+    for(const tile of tiles){
+      try{
+        const hits=await identifyWaterFeatures(layer,tile,signal);
+        hadSuccess=true;
+        candidates.push(...parseWaterIdentifyResults({results:hits},regionGeom,layer));
+      }catch(e){
+        if(signal?.aborted)throw e;
+        warnings.push(`${layer}: ${e.message}`);
+      }
+    }
+    if(!hadSuccess)warnings.push(`${layer}: keine Antwort`);
+  }
+  const unique=dedupeLakes(candidates);
+  if(!unique.length)return {geometry:null,geometries:[],lakes:[],warnings};
+  return {
+    geometry:mergeGeometries(unique.map(x=>x.geometry)),
+    geometries:unique.map(x=>x.geometry),
+    lakes:unique.map(x=>x.name).filter(Boolean),
+    warnings
+  };
 }
 export function applyGeometryPath(ctx,geom,transform){
   // evenodd fill rule keeps internal holes (e.g. lakes / enclaves) correctly unselected.

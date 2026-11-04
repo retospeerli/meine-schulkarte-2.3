@@ -1,4 +1,4 @@
-# Schweizer Kartengenerator – Version 2.3
+# Schweizer Kartengenerator – Version 2.4
 
 Statische Webanwendung für **GitHub Pages**, ohne Backend, von Reto Speerli. Drei Betriebsarten: Landeskarte, SWISSIMAGE-Luftbild, Höhenlinien für Graukarton-Schichtreliefs. Zusätzliche Farbmaske für **politische Gemeinden oder Kantone**.
 
@@ -89,3 +89,16 @@ Daten: **© swisstopo**, Nutzungsbedingungen: <https://www.swisstopo.admin.ch/de
 
 - Bei Auswahl einer politischen Gemeinde werden angrenzende Seen zusätzlich farbig hervorgehoben, sofern die Gemeinde an eine See-Fläche grenzt.
 - Der ausgegraute Bereich ausserhalb der ausgewählten Gemeinde bzw. des ausgewählten Kantons wird heller dargestellt, damit das Zielgebiet stärker hervorsticht.
+
+
+## Version 2.4 – Seen an Gemeindegrenzen
+
+- Zusätzlicher amtlicher **Seeflächenlayer** `ch.bafu.vec25-seen` (Polygone) neben `swissTLM3D` (Gewässernetz, teils Seeufer-Linien). Das BAFU-Layer basiert auf älteren VECTOR25-Daten.
+- Abfragegebiete werden aufgeteilt; pro Gebiet `limit=200` mit `offset`-Paginierung. Fehlende Seegeometrien werden nicht stillschweigend erfunden.
+- **Union statt XOR:** See- und Gemeindegeometrien werden separat farbig eingeblendet. Gemeinsame Überlappungsbereiche bleiben farbig. Mehrere Seen werden ebenfalls separat gezeichnet.
+- Erkennung der Seebezeichnungen mit Endung `-see` sowie `-weiher` korrigiert; Fliessgewässer ausgeschlossen.
+- 35 m Abstandstoleranz zwischen unabhängigen Gemeinde- und Uferpolygonen für leicht unterschiedliche Datenstände.
+- Das Auswahlfeld meldet die Zahl der erkannten angrenzenden Seen und API-Warnungen.
+- Prüffall Wädenswil: Zürichsee und Hüttnersee als zwei separate farbige Seeflächen. Tests mit simulierten API-Antworten, kein Live-Test der swisstopo-API.
+
+**Hinweis zur Genauigkeit:** Der BAFU-Seeflächenlayer verwendet VECTOR25-Geometrien mit Datenstand 2007. Für allerhöchste Seeuferpräzision wird eine Aktualisierung auf aktuelle swissTLM3D-Bodenbedeckungs-Polygone benötigt; die aktuelle Browser-API liefert nicht in allen Fällen diese Flächen als einzelne Geometrien. Diese Version versucht keinen künstlichen Farbflächenersatz.

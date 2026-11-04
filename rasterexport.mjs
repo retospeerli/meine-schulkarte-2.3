@@ -1,6 +1,6 @@
 import {toPaper} from './core.mjs';
 import {choosePrintProduct,discoverPrintAssets,printPixels,expectedNativeDpi,verifyTileCoverage} from './printdata.mjs';
-import {applyGeometryPath} from './regions.mjs';
+import {applyGeometryPath,highlightParts} from './regions.mjs';
 const MASK_LIGHTEN_ALPHA=.26;
 
 function intersection(a,b){
@@ -54,9 +54,13 @@ export function colourizeBlock(raw,w,h,region,l,total,x0,y0,mode){
   if(region&&mode!=='grau'){
     ctx.fillStyle=`rgba(255,255,255,${MASK_LIGHTEN_ALPHA})`;
     ctx.fillRect(0,0,w,h);
-    ctx.save();
-    applyGeometryPath(ctx,region.maskGeometry||region.geometry,(e,n)=>transformToBlock(l,total,x0,y0,e,n));
-    ctx.clip('evenodd');ctx.drawImage(raw,0,0);ctx.restore();
+    // Union the highlighted shapes by rendering separate clips, avoiding
+    // evenodd cancellation where a lake overlaps the municipal polygon.
+    for(const geometry of highlightParts(region)){
+      ctx.save();
+      applyGeometryPath(ctx,geometry,(e,n)=>transformToBlock(l,total,x0,y0,e,n));
+      ctx.clip('evenodd');ctx.drawImage(raw,0,0);ctx.restore();
+    }
   }
   return out;
 }

@@ -2,7 +2,7 @@ import {PAPER,SOURCES,RESOLUTIONS,layout,tilePlan,resolutionZoom,tileSpan,enumer
 import {getHeightGrid,newHeightGrid,estimatedHeightTileCount} from './heights.mjs';
 import {computeContours,svgForContours} from './contours.mjs';
 import {choosePrintProduct,expectedNativeDpi,printPixels} from './printdata.mjs';
-import {CANTONS,searchRegions,getRegionGeometry,getAdjacentLakeGeometry,mergeGeometries,fitRegion,applyGeometryPath} from './regions.mjs?v=2.3';
+import {CANTONS,searchRegions,getRegionGeometry,getAdjacentLakeGeometry,fitRegion,applyGeometryPath,highlightParts} from './regions.mjs?v=2.4';
 import {createOriginalRasterPdf} from './rasterexport.mjs';
 
 const $=id=>document.getElementById(id);
@@ -110,14 +110,18 @@ function draw(){
       else {missing++;ctx.fillStyle='#eaf0f6';ctx.fillRect(x,y,size,size);}
     }
     if(selectedRegion && mode!=='grau'){
-      ctx.save();
-      applyGeometryPath(ctx,selectedRegion.maskGeometry||selectedRegion.geometry,(e,n)=>toPaper(l,e,n));
-      ctx.clip('evenodd');
-      for(const tile of tiles){
-        const [x,y]=toPaper(l,tile.minE,tile.maxN),entry=cache.get(`${mode}:${z}:${tile.x}:${tile.y}`);
-        if(entry?.state==='ready')ctx.drawImage(entry.img,x-.003,y-.003,size+.006,size+.006);
+      // Each feature is a SEPARATE clipping pass: do not combine municipality
+      // and lakes with evenodd, because overlapping polygons would cancel.
+      for(const geometry of highlightParts(selectedRegion)){
+        ctx.save();
+        applyGeometryPath(ctx,geometry,(e,n)=>toPaper(l,e,n));
+        ctx.clip('evenodd');
+        for(const tile of tiles){
+          const [x,y]=toPaper(l,tile.minE,tile.maxN),entry=cache.get(`${mode}:${z}:${tile.x}:${tile.y}`);
+          if(entry?.state==='ready')ctx.drawImage(entry.img,x-.003,y-.003,size+.006,size+.006);
+        }
+        ctx.restore();
       }
-      ctx.restore();
     }
     if(missing&&missing===tiles.length&&tiles.every(t=>cache.get(`${mode}:${z}:${t.x}:${t.y}`)?.state==='error'))status('WMTS-Vorschau konnte nicht geladen werden. Internetzugang oder Zugriff auf swisstopo prüfen.','error');
     $('tileText').textContent=`WMTS Vorschau: ${loaded}/${tiles.length} Kacheln · Zoom ${z}`;
@@ -215,8 +219,11 @@ async function pdfMap(l,signal){
         const composited=document.createElement('canvas');composited.width=256;composited.height=256;
         const cctx=composited.getContext('2d');cctx.filter='grayscale(1)';cctx.drawImage(base,0,0);cctx.filter='none';
         cctx.fillStyle=`rgba(255,255,255,${MASK_LIGHTEN_ALPHA})`;cctx.fillRect(0,0,256,256);
-        cctx.save();applyGeometryPath(cctx,selectedRegion.maskGeometry||selectedRegion.geometry,(e,n)=>[(e-tile.minE)/plan.resolution,(tile.maxN-n)/plan.resolution]);
-        cctx.clip('evenodd');cctx.drawImage(base,0,0);cctx.restore();
+        for(const geometry of highlightParts(selectedRegion)){
+          cctx.save();
+          applyGeometryPath(cctx,geometry,(e,n)=>[(e-tile.minE)/plan.resolution,(tile.maxN-n)/plan.resolution]);
+          cctx.clip('evenodd');cctx.drawImage(base,0,0);cctx.restore();
+        }
         pdf.addImage(composited.toDataURL('image/jpeg',.97),'JPEG',x,y,size,size,undefined,'FAST');
       }else pdf.addImage(buffer,'JPEG',x,y,size,size,undefined,'FAST');
     }
@@ -343,16 +350,22 @@ async function assignRegion(record,kind){
   try{
     const geometry=await getRegionGeometry(record.id,kind);
     if($('regionType').value!==kind)return;
-    let maskGeometry=geometry,lakeNames=[];
+    let lakeNames=[],lakeGeometries=[],lakeWarning='';
     if(kind==='gemeinde'){
+      $('regionStatus').textContent=`Suche angrenzende Seen bei ${record.name} …`;
       try{
         const extra=await getAdjacentLakeGeometry(geometry);
-        if(extra.geometry){maskGeometry=mergeGeometries([geometry,extra.geometry]);lakeNames=extra.lakes||[];}
-      }catch(e){console.warn('Zusätzliche See-Geometrie konnte nicht geladen werden:',e);}
+        lakeGeometries=extra.geometries||[];
+        lakeNames=extra.lakes||[];
+        if(extra.warnings?.length)lakeWarning=extra.warnings.join(' / ');
+      }catch(e){lakeWarning=e.message;console.warn('See-Geometrien konnten nicht geladen werden:',e);}
     }
-    selectedRegion={name:record.name,kind,geometry,maskGeometry,lakeNames};
-    const lakeInfo=lakeNames.length?` · angrenzender See farbig (${lakeNames.slice(0,3).join(', ')}${lakeNames.length>3?' …':''})`:'';
-    $('regionStatus').textContent=`${kind==='kanton'?'Kanton':'Gemeinde'} ${record.name}: farbig innerhalb, ausserhalb heller grau${lakeInfo} (${format(geometry.points)} amtliche Grenzpunkte).`;
+    selectedRegion={name:record.name,kind,geometry,lakeGeometries,lakeNames};
+    const lakeInfo=kind==='gemeinde'?(lakeGeometries.length?
+      ` · ${lakeGeometries.length} See${lakeGeometries.length===1?'':'n'} vollständig farbig${lakeNames.length?' ('+lakeNames.slice(0,3).join(', ')+(lakeNames.length>3?' …':'')+')':''}`:
+      ' · Kein angrenzender See erkannt') : '';
+    const warning=lakeWarning?` · Hinweis: ${lakeWarning}`:'';
+    $('regionStatus').textContent=`${kind==='kanton'?'Kanton':'Gemeinde'} ${record.name}: farbig innerhalb, ausserhalb heller grau${lakeInfo}${warning} (${format(geometry.points)} amtliche Grenzpunkte).`;
     $('clearRegion').hidden=false;$('regionResults').hidden=true;
     if($('fitRegion').checked){
       const l=layout(cfg()),f=fitRegion(geometry,l.innerW,l.innerH);
