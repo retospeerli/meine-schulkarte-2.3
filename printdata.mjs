@@ -1,6 +1,6 @@
 /** Official high-resolution swisstopo STAC GeoTIFF product discovery, EPSG:2056. */
-import {stacBbox} from './core.mjs';
-import {cartographyForScale,OFFICIAL_MAP_SERIES} from './cartography.mjs';
+import {stacBbox} from './core.mjs?v=2.7';
+import {cartographyForScale,OFFICIAL_MAP_SERIES} from './cartography.mjs?v=2.7';
 
 export const MAP_SERIES=OFFICIAL_MAP_SERIES;
 export const ORTHO_COLLECTION='ch.swisstopo.swissimage-dop10';
@@ -25,7 +25,8 @@ export function selectPrintAssets(features,{mode='karte',collection='',preferMet
         const m=path.match(/(?:^|[_-])(0\.1|0\.25|2)(?=[_.-])/);
         const gsd=Number(a.gsd||m?.[1]);
         if(![.1,.25,2].includes(gsd))continue;
-        const key=path.replace(/([-_])20\d{2}(?=[_-])/,'$1YEAR')
+        const tile=path.match(/[_-](\d{4})-(\d{4})_(?:0\.1|0\.25|2)_2056/i);
+        const key=tile?`${tile[1]}-${tile[2]}`:path.replace(/([-_])20\d{2}(?=[_-])/,'$1YEAR')
           .replace(/([-_])(?:0\.1|0\.25|2)(?=[_.-])/,'$1GSD');
         all.push({href,year,gsd,key,itemId:item.id});
       }else{
@@ -41,8 +42,16 @@ export function selectPrintAssets(features,{mode='karte',collection='',preferMet
   const chosen=new Map();
   for(const a of all){
     const current=chosen.get(a.key);
-    if(!current || (mode==='luftbild'&&a.gsd<current.gsd) ||
-      (a.gsd===current.gsd&&a.year>current.year) || (mode!=='luftbild'&&a.year>current.year)) chosen.set(a.key,a);
+    // At A0/1:50'000 the 2-m source already exceeds 508 dpi.
+    // Selecting a 10-cm COG there would multiply network/decoding costs
+    // without adding a single printable detail.
+    const usable=a.gsd<=preferMeters+1e-8;
+    const currentUsable=current?.gsd<=preferMeters+1e-8;
+    const betterOrtho=mode==='luftbild'&&(!current ||
+      (usable&&!currentUsable) ||
+      (usable===currentUsable && (usable?a.gsd>current.gsd:a.gsd<current.gsd)) ||
+      (a.gsd===current.gsd&&a.year>current.year));
+    if(!current||betterOrtho||(mode!=='luftbild'&&a.year>current.year))chosen.set(a.key,a);
   }
   return [...chosen.values()];
 }
@@ -51,17 +60,17 @@ export async function discoverPrintAssets(bounds,{mode='karte',scale=25000,signa
   const bbox=stacBbox(bounds).join(',');
   let url=`https://data.geo.admin.ch/api/stac/v1/collections/${encodeURIComponent(product.collection)}/items?bbox=${bbox}&limit=100`;
   let features=[];const visited=new Set();
-  for(let page=0;url&&page<22;page++){
+  for(let page=0;url&&page<250;page++){
     if(signal?.aborted)throw new DOMException('Abgebrochen','AbortError');
     if(visited.has(url))throw new Error('STAC-Paginierung fehlerhaft.');visited.add(url);
     onProgress(`Suche Original-GeoTIFFs (${product.description}), Seite ${page+1} …`);
     const r=await fetch(url,{signal});if(!r.ok)throw new Error(`STAC-Dienst ${product.collection}: HTTP ${r.status}`);
     const j=await r.json();features.push(...(j.features||[]));
-    if(features.length>2200)throw new Error('Zu viele Quellenkacheln; Ausschnitt verkleinern.');
+    if(features.length>20000)throw new Error('Mehr als 20 000 Datenkacheln; Ausschnitt oder Massstab eingrenzen.');
     const next=j.links?.find(v=>v.rel==='next');url=next?new URL(next.href,url).href:null;
   }
-  if(url)throw new Error('STAC-Suche überschreitet 22 Seiten; Ausschnitt verkleinern.');
-  const assets=selectPrintAssets(features,{mode,collection:product.collection});
+  if(url)throw new Error('STAC-Suche überschreitet 250 Seiten; Ausschnitt eingrenzen.');
+  const assets=selectPrintAssets(features,{mode,collection:product.collection,preferMeters: mode==='luftbild'?scale*.0254/508:product.expectedGsd});
   if(!assets.length)throw new Error(`Keine originalen GeoTIFF-Quelldaten für ${product.description} gefunden. Wähle einen anderen Kartenausschnitt oder lade lokale GeoTIFFs.`);
   if(assets.length>limit)throw new Error(`${assets.length} Datenkacheln gefunden (Browsergrenze ${limit}). Ausschnitt verkleinern oder lokal vorbereitete GeoTIFFs verwenden.`);
   return {product,assets};

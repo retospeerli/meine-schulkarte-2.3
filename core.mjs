@@ -1,5 +1,5 @@
 /** Print and WMTS math in Swiss LV95 (metres). No network dependencies. */
-import {cartographyForScale} from './cartography.mjs';
+import {cartographyForScale} from './cartography.mjs?v=2.7';
 export const PAPER = Object.freeze({
   A5:[148,210], A4:[210,297], A3:[297,420],
   A2:[420,594], A1:[594,841], A0:[841,1189]

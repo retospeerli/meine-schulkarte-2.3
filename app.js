@@ -1,11 +1,12 @@
-import {PAPER,SOURCES,RESOLUTIONS,layout,tilePlan,resolutionZoom,tileSpan,enumerateTiles,tileUrl,toPaper} from './core.mjs?v=2.6';
-import {getHeightGrid,newHeightGrid,estimatedHeightTileCount} from './heights.mjs';
-import {computeContours,svgForContours} from './contours.mjs';
-import {choosePrintProduct,expectedNativeDpi,printPixels} from './printdata.mjs?v=2.6';
-import {cartographyForScale,cartographyDescription} from './cartography.mjs';
-import {CANTONS,searchRegions,getRegionGeometry,getAdjacentLakeGeometry,fitRegion,applyGeometryPath,highlightParts} from './regions.mjs?v=2.6';
-import {createOriginalRasterPdf,colourizeBlock} from './rasterexport.mjs?v=2.6';
-import {wmsGetMapUrl,printedBlockBounds} from './mapservice.mjs?v=2.6';
+import {PAPER,SOURCES,RESOLUTIONS,layout,tilePlan,resolutionZoom,tileSpan,enumerateTiles,tileUrl,toPaper} from './core.mjs?v=2.7';
+import {getHeightGrid,newHeightGrid,estimatedHeightTileCount} from './heights.mjs?v=2.7';
+import {computeContours,svgForContours} from './contours.mjs?v=2.7';
+import {choosePrintProduct,expectedNativeDpi,printPixels} from './printdata.mjs?v=2.7';
+import {cartographyForScale,cartographyDescription} from './cartography.mjs?v=2.7';
+import {CANTONS,searchRegions,getRegionGeometry,getAdjacentLakeGeometry,fitRegion,applyGeometryPath,highlightParts} from './regions.mjs?v=2.7';
+import {createOriginalRasterPdf,colourizeBlock} from './rasterexport.mjs?v=2.7';
+import {wmsGetMapUrl,printedBlockBounds} from './mapservice.mjs?v=2.7';
+import {IncrementalA0Pdf,openLargePdfOutput} from './streamedpdf.mjs?v=2.7';
 
 const $=id=>document.getElementById(id);
 const sheet=$('sheet'),canvas=$('preview'),ctx=canvas.getContext('2d');
@@ -204,7 +205,7 @@ function draw(){
   }else{
     const target=printPixels(l),p=choosePrintProduct(l.scale,mode),expected=expectedNativeDpi(l.scale,p.expectedGsd);
     if($('exportSource').value==='original'){
-      $('quality').textContent=`${style?style.label+' · ':''}Originaldruck: ${l.dpi} dpi · ${format(target.width)} × ${format(target.height)} Pixel · ${format(target.blocks)} Blöcke. Quelle: ${p.description}. Erwartete Quellauflösung: ${format(expected)} dpi${mode==='luftbild'?' (SWISSIMAGE je nach Gebiet)':''}. ${expected+1<l.dpi?'Achtung: Quellendetails unter Druck-DPI, keine künstlichen Details!':''}`;
+      $('quality').textContent=`${style?style.label+' · ':''}${mode==='luftbild'?'SWISSIMAGE-Streaming-PDF (A0-fähig)':'Originaldruck'}: ${l.dpi} dpi · ${format(target.width)} × ${format(target.height)} Pixel · ${format(target.blocks)} Blöcke. Quelle: ${p.description}. Erwartete Quellauflösung: ${format(expected)} dpi${mode==='luftbild'?' (SWISSIMAGE je nach Gebiet)':''}. ${expected+1<l.dpi?'Achtung: Quellendetails unter Druck-DPI, keine künstlichen Details!':''}`;
     }else if(style) $('quality').textContent=`${style.label} · WMS-Schnelldruck: ${l.dpi} dpi als PDF-Ausgaberaster. Kein Original-COG: WMS-Kartenbilder ersetzen die originalen 508-dpi-Druckdaten NICHT.`;
     else {const effective=plan.actualDpi,limit=plan.tiles.length>3200;
       $('quality').textContent=`WMTS-Schnelldruck: ${l.dpi} dpi PDF-Ziel · WMTS-Raster: ${plan.resolution} m/Pixel (≈ ${format(effective)} Quellen-dpi) · ${format(plan.tiles.length)} Kacheln${limit?' · zu viele für Browser':''}. Die WMTS-Bilder ersetzen die originalen Druckdaten NICHT.`;}
@@ -393,12 +394,31 @@ async function downloadPdf(){
       if(signal.aborted)throw abortErr();status('Erzeuge Vektor-PDF …');
       const pdf=pdfContour(l,result);pdf.save('Hoehenlinien_'+fileStem()+'.pdf');
     }else{
+      if(mode==='luftbild'&&$('exportSource').value==='original'){
+        // IMPORTANT: open the system Save dialog now, while the click still
+        // carries user activation. Delayed picker calls fail in Chrome.
+        const output=await openLargePdfOutput('SWISSIMAGE_'+fileStem()+'.pdf',{onProgress:s=>status(s)});
+        const streamed=new IncrementalA0Pdf(output.sink,{
+          pageWidthMm:l.w,pageHeightMm:l.h,title:'SWISSIMAGE Luftbild '+fileStem(),scale:l.scale
+        });
+        try{
+          await streamed.start();
+          const {nativeDpi}=await createOriginalRasterPdf(l,mode,selectedRegion,[...$('mapFiles').files],{
+            signal,onProgress:s=>status(s),streamPdf:streamed
+          });
+          if(signal.aborted)throw abortErr();
+          const info=await streamed.finish();
+          if(output.reveal)await output.reveal();
+          status(`SWISSIMAGE-Druck-PDF fertig: ${l.w} × ${l.h} mm · ${l.dpi} dpi · ${format(info.images)} Bildblöcke · ${format(info.bytes/1e6,1)} MB · Quelle effektiv ca. ${Math.round(nativeDpi)} dpi. Drucken mit 100 %.`, 'success');
+        }catch(e){await streamed.abort().catch(()=>{});throw e;}
+        return;
+      }
       if($('exportSource').value==='original'){
         const {pdf,nativeDpi}=await createOriginalRasterPdf(l,mode,selectedRegion,[...$('mapFiles').files],{
           signal,onProgress:s=>status(s),freshPdf,addAttribution
         });
         if(signal.aborted)throw abortErr();
-        pdf.save('Original_508dpi_'+fileStem()+'.pdf');
+        pdf.save('Original_'+l.dpi+'dpi_'+fileStem()+'.pdf');
         status(`Druck-PDF mit ${l.dpi} dpi erstellt (Quelle effektiv ca. ${Math.round(nativeDpi)} dpi). Massstab beim Druck 100 %.`, 'success');
         return;
       }

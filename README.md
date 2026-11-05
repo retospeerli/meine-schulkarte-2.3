@@ -127,3 +127,38 @@ Die Landeskarten erhalten statt der automatisch skalierten GeoAdmin-Sammelkarte 
 **Unverändert:** Der Standard-Originaldruck bezieht 508-dpi-Swiss-Map-Raster-COGs; Luftbilder bleiben über WMTS/SWISSIMAGE, Höhenlinien über swissALTI³D. Alle Gemeinde-/Kantonshervorhebungen einschliesslich der Seen bleiben erhalten.
 
 **Einschränkung:** Die WMS-Erreichbarkeit für jede konkrete Kombination von Layer und Ausschnitt lässt sich in der Entwicklungsumgebung nicht live bestätigen; ein Online-Test über GitHub Pages bleibt nötig.
+
+
+## Version 2.7 – A0-SWISSIMAGE ist Pflichtfall
+
+**Neu: A0-Luftbilddruck als echtes einseitiges Streaming-PDF in Originalgrösse.**
+Die bisherige jsPDF-Ausgabe hat selbst bei 512-Pixel-Bildblöcken alle JPEGs im
+JavaScript-Heap gesammelt. Neu wird die PDF-1.4-Datei während der Erzeugung
+inkrementell geschrieben. Ein JPG-Bildblock wird decodiert und unmittelbar als
+DCT-kodiertes RGB-XObject eingefügt. Die endgültige Cross-Reference-Tabelle
+wird beim Abschluss geschrieben. Keine komplette A0-Rasterfläche wird angelegt.
+
+- **Chrome und Edge:** Das Systemdialogfenster zum Speichern erscheint **vor**
+  dem ersten Download. Anschliessend wird die Datei über die File System Access
+  API direkt auf die gewählte Festplatte geschrieben. Ein Abbruch bricht die
+  unvollständige Datei ab.
+- **Andere moderne Browser:** Wenn `navigator.storage.getDirectory()`
+  verfügbar ist, schreibt der Generator zunächst in den Origin Private File
+  System Storage (OPFS) und bietet danach den Download der fertigen Datei an.
+  OPFS benötigt freien temporären Speicherplatz.
+- **Ohne beide APIs:** Die App erklärt, warum dieser browserseitige A0-Export
+  nicht unterstützt wird; keine unvollständige Datei wird als Druckdatei angeboten.
+- **Automatische SWISSIMAGE-Quellauflösung:** Bei 508 dpi und 1:50'000 reicht
+  die 2-m-Quelle aus (635 effektive Quellen-dpi). Bei 1:25'000 (1.25 m/Pixel)
+  verwendet die App dagegen 10-/25-cm-Quellen. Keine pauschale Hochrechnung.
+- Der GeoTIFF.js-CDN-Pfad wurde auf **2.1.4-beta.1** gesetzt. Diese Version
+  enthält die Korrektur für den dokumentierten Fehler `reading 'offset'`.
+- Maximal 14 geöffnete SWISSIMAGE-Kacheln (LRU) und begrenzter Blockcache.
+- Die Farbhervorhebung für Gemeinden / Kantone samt Seen bleibt im A0-PDF erhalten.
+- Das PDF enthält JPEG-kodierte RGB-Luftbildblöcke; es ist **kein PDF/X-4**.
+  Gegebenenfalls konvertiert die Druckerei es mit ihrem ICC-Profil.
+
+**Nicht als vollständig live-verifiziert ausgeben:** Echte swisstopo-STAC- und
+COG-Downloads sowie ein A0-Drucker-Workflow können in der Entwicklungsumgebung
+nicht end-to-end ausgeführt werden. Die internen Tests prüfen PDF-Struktur,
+Seitengeometrie, Quellwahl und Simulation von Blöcken.
