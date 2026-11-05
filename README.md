@@ -1,4 +1,4 @@
-# Schweizer Kartengenerator – Version 2.5
+# Schweizer Kartengenerator – Version 2.6
 
 Statische Webanwendung für **GitHub Pages**, ohne Backend, von Reto Speerli. Drei Betriebsarten: Landeskarte, SWISSIMAGE-Luftbild, Höhenlinien für Graukarton-Schichtreliefs. Zusätzliche Farbmaske für **politische Gemeinden oder Kantone**.
 
@@ -14,7 +14,7 @@ Der **Standardexport** nutzt originalgetreue **Swiss Map Raster**-GeoTIFFs über
 
 **Kartografisch massstabsgebundene Datenquellen, identisch in Vorschau und Druck:**
 
-| Gewählter Massstab | Kartenserie | Vorschau + WMTS | 508-dpi-Originaldruck |
+| Gewählter Massstab | Kartenserie | WMS-Vorschau und Schnelldruck | 508-dpi-Originaldruck |
 |---|---|---|---|
 | 1:10'000 | SMR10 | `ch.swisstopo.landeskarte-farbe-10` | `ch.swisstopo.landeskarte-farbe-10` |
 | 1:25'000 | SMR25 | `ch.swisstopo.pixelkarte-farbe-pk25.noscale` | dieselbe STAC-Collection |
@@ -28,7 +28,7 @@ Die App nutzt nun **nie** den automatisch umschaltenden Sammellayer `ch.swisstop
 
 Bei einem frei gewählten **Zwischenmassstab** (z. B. 1:40'000) wird die nächstgeeignete amtliche Karte (hier SMR50) für die exakte Druckgeometrie im gewünschten Massstab skaliert. Das ist **keine neue amtliche Kartengrafik** – die App zeigt Produkt und Vergrösserung in Prozent offen an. Eine amtliche Ausgabe mit exakt passenden Beschriftungen/Signaturen ist deshalb nur bei den sieben offiziell unterstützten Massstäben möglich. Für Landeskarten ausserhalb 1:10'000 bis 1:1'000'000 gibt die App eine Fehlermeldung statt eine falsche Normqualität aus; Luftbilder/Höhenlinien bleiben auch ausserhalb dieses Bereichs frei skalierbar.
 
-Die Vorschau wird aus dem expliziten WMTS-Layer gerendert. Die normgetreuen Druckdaten stammen als `KREL`-TIFF aus dem jeweils gleichen Kartenprodukt. Lokal zugefügte TIFFs müssen die zur Karte passende native Bodenpixelweite (508 dpi im Nennmassstab) aufweisen; andernfalls wird die Ausgabe abgebrochen. Der WMTS-Schnell-PDF-Export bleibt ein qualitativ niedrigeres Verfahren und **kein** Ersatz für das GeoTIFF-Druck-PDF.
+Die Landeskarten-Vorschau wird aus dem expliziten WMS-Layer gerendert. Die normgetreuen Druckdaten stammen als `KREL`-TIFF aus dem jeweils gleichen Kartenprodukt. Lokal zugefügte TIFFs müssen die zur Karte passende native Bodenpixelweite (508 dpi im Nennmassstab) aufweisen; andernfalls wird die Ausgabe abgebrochen. Der WMS-Schnell-PDF-Export bleibt ein qualitativ niedrigeres Verfahren und **kein** Ersatz für das GeoTIFF-Druck-PDF.
 
 Beim Luftbildmodus: **SWISSIMAGE-Original-COGs** (10 cm Bodenauflösung, regional ältere/geringere Originaldetailauflösung; der tatsächliche Pixelabstand wird gelesen).
 
@@ -40,7 +40,7 @@ DIN A5, A4, A3, A2, A1, A0, hoch/quer, freier Massstab und Rand. Die App berechn
 
 A0 bei 508 dpi bedeutet ungefähr **400 Millionen Ausgabepixel** (je nach Rand). Die Ausgabe wird zwar blockweise verarbeitet, aber das PDF wird von jsPDF im Speicher aufgebaut. A0 kann **sehr lange dauern**, mehrere Hundert MB bis GB beanspruchen oder auf Geräten mit wenig RAM fehlschlagen. Die App bricht bei zu vielen Kacheln oder fehlenden Original-TIFFs ab. Ein Desktop-PC mit genügend Speicher ist sinnvoll; ein kleiner A4-Testdruck empfiehlt sich vor dem Grossformatdruck. Das PDF enthält RGB, nicht zwingend das CMYK-Profil einer Druckerei; im Zweifel ICC-Profil/Druckerei abstimmen.
 
-**Fallback:** WMTS-Schnellexport ist weiterhin enthalten, aber **nicht** als echter 508-dpi-Originaldruck gekennzeichnet. Die Vorschau selbst verwendet aus Geschwindigkeitsgründen WMTS.
+**Fallback:** WMS-Schnellexport für Landeskarten und WMTS-Schnellexport für Luftbilder bleiben enthalten, sind aber **nicht** als echter 508-dpi-Originaldruck gekennzeichnet.
 
 Für lokale Nutzung kann man die Original-GeoTIFFs selbst herunterladen und im Exportbereich per Mehrfachauswahl hinzufügen. Diese Dateien müssen in **EPSG:2056** georeferenziert sein. Die App verwirft nicht passende oder unvollständige Quellen, statt leere Flächen als fertige Karten auszugeben.
 
@@ -59,7 +59,7 @@ Unter «Gebiet farbig hervorheben» auswählen:
 
 Die App lädt danach die **Originalpolygon-Geometrie** von **swissBOUNDARIES3D** über `api3.geo.admin.ch` als GeoJSON in **EPSG:2056**, mit Löchern und mehrfach getrennten Flächenteilen. Optional wird das gewählte Gebiet automatisch auf der Druckseite eingepasst.
 
-**Darstellung:** innen unverändert in Farbe, ausserhalb echtes Graustufenbild. Die Geometrie wird in der Vorschau und im Original- sowie WMTS-PDF-Export als Maske verwendet. Für die Hervorhebung im Landeskarte- bzw. Luftbildmodus bleiben. «Karte grau» zeigt bewusst die gesamte Karte grau.
+**Darstellung:** innen unverändert in Farbe, ausserhalb echtes Graustufenbild. Die Geometrie wird in der Vorschau und im Original- sowie WMS-/WMTS-PDF-Export als Maske verwendet. Für die Hervorhebung im Landeskarte- bzw. Luftbildmodus bleiben. «Karte grau» zeigt bewusst die gesamte Karte grau.
 
 ## Höhenlinien / Graukarton
 
@@ -115,4 +115,15 @@ Daten: **© swisstopo**, Nutzungsbedingungen: <https://www.swisstopo.admin.ch/de
 
 ## Version 2.5 – Kartografische Generalisierung passend zum Ausgabemassstab
 
-Die Landeskarten erhalten statt der automatisch skalierten GeoAdmin-Sammelkarte je eine feste Kartenserie für Vorschau, WMTS-PDF und Originaldruck. Sieben offizielle Massstäbe werden berücksichtigt, freie Zwischenmassstäbe mit transparenter Kennzeichnung ihrer Ausgangskarte und Bildskalierung. Bei massstabsfremden lokalen GeoTIFFs bricht der Originaldruck ab. Graukarten verwenden dieselbe kartografische Serie in Graustufen. Gemeinde-/Kantonshervorhebung, See-Erkennung, Luftbild- und Höhenlinienmodus bleiben erhalten.
+Die Landeskarten erhalten statt der automatisch skalierten GeoAdmin-Sammelkarte je eine feste Kartenserie für Vorschau, Schnelldruck-PDF und Originaldruck. Sieben offizielle Massstäbe werden berücksichtigt, freie Zwischenmassstäbe mit transparenter Kennzeichnung ihrer Ausgangskarte und Bildskalierung. Bei massstabsfremden lokalen GeoTIFFs bricht der Originaldruck ab. Graukarten verwenden dieselbe kartografische Serie in Graustufen. Gemeinde-/Kantonshervorhebung, See-Erkennung, Luftbild- und Höhenlinienmodus bleiben erhalten.
+
+
+## Version 2.6 – Reparatur der Landeskarten-Vorschau bei A0 / 1:10'000
+
+**Ursache:** Die frühere Vorschau hat die WMTS-Zoomstufe allein aus der Bildschirmbreite bestimmt. Bei A0 / 1:10'000 waren das neun Kacheln auf Zoom 19, obwohl die massstabsgebundenen swisstopo-Layer nicht an jeder WMTS-Zoomstufe verfügbar sind. Das führte zu 0/9 Kacheln und einer leeren Vorschau.
+
+**Korrektur:** Landeskarte und Karte grau werden nun per offiziellem WMS `GetMap` (`wms.geo.admin.ch`, `EPSG:2056`) mit der ausdrücklich gewählten Kartenserie und der exakten LV95-Kartenbegrenzung gerendert – ohne WMTS-Zoomstufen. Das funktioniert für A0 bei 1:10'000 genauso wie für die übrigen Formate und Massstäbe, sofern der WMS-Dienst im Browser erreichbar ist. Der schnelle PDF-Kartendienst-Export verwendet für Landeskarten ebenfalls WMS, mit blockweiser Abfrage und derselben Geo-Referenz. Die Vorschau meldet `lädt`, `geladen` oder einen konkreten Fehler, nicht mehr ein irreführendes 0/9.
+
+**Unverändert:** Der Standard-Originaldruck bezieht 508-dpi-Swiss-Map-Raster-COGs; Luftbilder bleiben über WMTS/SWISSIMAGE, Höhenlinien über swissALTI³D. Alle Gemeinde-/Kantonshervorhebungen einschliesslich der Seen bleiben erhalten.
+
+**Einschränkung:** Die WMS-Erreichbarkeit für jede konkrete Kombination von Layer und Ausschnitt lässt sich in der Entwicklungsumgebung nicht live bestätigen; ein Online-Test über GitHub Pages bleibt nötig.

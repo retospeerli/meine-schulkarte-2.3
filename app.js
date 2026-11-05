@@ -1,15 +1,16 @@
-import {PAPER,SOURCES,RESOLUTIONS,layout,tilePlan,resolutionZoom,tileSpan,enumerateTiles,tileUrl,toPaper} from './core.mjs?v=2.5';
+import {PAPER,SOURCES,RESOLUTIONS,layout,tilePlan,resolutionZoom,tileSpan,enumerateTiles,tileUrl,toPaper} from './core.mjs?v=2.6';
 import {getHeightGrid,newHeightGrid,estimatedHeightTileCount} from './heights.mjs';
 import {computeContours,svgForContours} from './contours.mjs';
-import {choosePrintProduct,expectedNativeDpi,printPixels} from './printdata.mjs?v=2.5';
+import {choosePrintProduct,expectedNativeDpi,printPixels} from './printdata.mjs?v=2.6';
 import {cartographyForScale,cartographyDescription} from './cartography.mjs';
-import {CANTONS,searchRegions,getRegionGeometry,getAdjacentLakeGeometry,fitRegion,applyGeometryPath,highlightParts} from './regions.mjs?v=2.5';
-import {createOriginalRasterPdf} from './rasterexport.mjs?v=2.5';
+import {CANTONS,searchRegions,getRegionGeometry,getAdjacentLakeGeometry,fitRegion,applyGeometryPath,highlightParts} from './regions.mjs?v=2.6';
+import {createOriginalRasterPdf,colourizeBlock} from './rasterexport.mjs?v=2.6';
+import {wmsGetMapUrl,printedBlockBounds} from './mapservice.mjs?v=2.6';
 
 const $=id=>document.getElementById(id);
 const sheet=$('sheet'),canvas=$('preview'),ctx=canvas.getContext('2d');
 const inputs=['paper','orientation','east','north','scale','margin','dpi','interval','sampling','stroke','majorEvery'];
-const cache=new Map();let mode='karte',contourResult=null,contourLayout=null,aborter=null,renderTimer=null,working=false,selectedRegion=null;
+const cache=new Map(),mapPreviewCache=new Map();let mode='karte',contourResult=null,contourLayout=null,aborter=null,renderTimer=null,working=false,selectedRegion=null;
 const MASK_LIGHTEN_ALPHA=.26;
 const abortErr=()=>new DOMException('Abgebrochen','AbortError');
 
@@ -65,7 +66,7 @@ function drawContours(l,result){
 function previewTileZoom(l){
   // Grid resolution needed for screen display (source pixels per CSS preview pixel).
   const perCssPx=l.groundW/(l.innerW*sheet.clientWidth/l.w);
-  const z=resolutionZoom(perCssPx,mode==='kontur'?'grau':mode);
+  const z=resolutionZoom(perCssPx,mode);
   for(let i=z;i>=14;i--){if(RESOLUTIONS[i]!=null&&enumerateTiles(l.b,i).length<=125)return i;}
   return 14;
 }
@@ -79,10 +80,64 @@ function previewTile(key,url){
   if(cache.size>450){for(const [k,v] of cache){if(v.state!=='loading'){cache.delete(k);break;}}}
   return o;
 }
+function getWmsPreview(l,style){
+  // One exact GetMap, not an arbitrary WMTS zoom that may not exist for this map.
+  const width=Math.max(1,Math.round(canvas.width*l.innerW/l.w));
+  const height=Math.max(1,Math.round(canvas.height*l.innerH/l.h));
+  const key=[style.wmts,...[l.b.minE,l.b.minN,l.b.maxE,l.b.maxN].map(v=>v.toFixed(3)),width,height].join(':');
+  let entry=mapPreviewCache.get(key);
+  if(entry)return entry;
+  entry={state:'loading',img:null,width,height};mapPreviewCache.set(key,entry);
+  const img=new Image();img.crossOrigin='anonymous';img.decoding='async';
+  img.onload=()=>{entry.state='ready';entry.img=img;schedule(false);};
+  let usePng=false;
+  img.onerror=()=>{
+    if(!usePng){
+      usePng=true;img.src=wmsGetMapUrl(style.wmts,l.b,width,height,'image/png');return;
+    }
+    entry.state='error';schedule(false);
+  };
+  img.src=wmsGetMapUrl(style.wmts,l.b,width,height);
+  if(mapPreviewCache.size>12){
+    for(const [k,v] of mapPreviewCache)if(v.state!=='loading'&&k!==key){mapPreviewCache.delete(k);break;}
+  }
+  return entry;
+}
+function drawWmsPreview(l,style){
+  const entry=getWmsPreview(l,style);
+  $('tileText').textContent=`WMS-Vorschau: ${entry.state==='ready'?'geladen':entry.state==='error'?'Fehler beim Kartenabruf':'lädt …'} · ${style.label} · ${entry.width} × ${entry.height} Pixel`;
+  if(entry.state==='error'){
+    ctx.fillStyle='#f0f2f5';ctx.fillRect(l.margin,l.margin,l.innerW,l.innerH);
+    status(`Die Karte ${style.label} konnte per WMS nicht geladen werden. Netzwerk oder wms.geo.admin.ch prüfen.`, 'error');
+    return;
+  }
+  if(entry.state!=='ready'){
+    ctx.fillStyle='#f0f2f5';ctx.fillRect(l.margin,l.margin,l.innerW,l.innerH);
+    return;
+  }
+  const showGrey=mode==='grau'||Boolean(selectedRegion);
+  if(showGrey){
+    ctx.filter='grayscale(1)';
+    ctx.drawImage(entry.img,l.margin,l.margin,l.innerW,l.innerH);
+    ctx.filter='none';
+    if(selectedRegion&&mode!=='grau'){
+      ctx.fillStyle=`rgba(255,255,255,${MASK_LIGHTEN_ALPHA})`;
+      ctx.fillRect(l.margin,l.margin,l.innerW,l.innerH);
+    }
+  }else ctx.drawImage(entry.img,l.margin,l.margin,l.innerW,l.innerH);
+  if(selectedRegion&&mode!=='grau'){
+    for(const geometry of highlightParts(selectedRegion)){
+      ctx.save();
+      applyGeometryPath(ctx,geometry,(e,n)=>toPaper(l,e,n));
+      ctx.clip('evenodd');ctx.drawImage(entry.img,l.margin,l.margin,l.innerW,l.innerH);
+      ctx.restore();
+    }
+  }
+}
 function draw(){
   renderTimer=null;
   let l,plan;
-  try {l=layout(cfg());plan=mode==='kontur'?null:tilePlan(cfg());}
+  try {l=layout(cfg());plan=mode==='luftbild'?tilePlan(cfg()):null;}
   catch(e){status(errorText(e),'error');$('cartographyInfo').textContent=errorText(e);$('quality').textContent='Keine massstabsgetreue Landeskarten-Ausgabe möglich.';return;}
   const style=(mode==='karte'||mode==='grau')?cartographyForScale(l.scale):null;
   $('cartographyInfo').hidden=!style;
@@ -98,6 +153,8 @@ function draw(){
       ctx.fillStyle='#71829a';ctx.textAlign='center';ctx.font='4px system-ui,sans-serif';
       ctx.fillText('Höhenlinien berechnen',l.w/2,l.h/2);
     }
+  }else if(style){
+    drawWmsPreview(l,style);
   }else{
     const z=previewTileZoom(l),span=tileSpan(z),tiles=enumerateTiles(l.b,z),size=span*1000/l.scale;
     let missing=0,loaded=0;
@@ -145,11 +202,12 @@ function draw(){
     catch(e){$('tileText').textContent=e.message;}
     $('quality').textContent=`Vektor-PDF und SVG: exakt 1:${format(l.scale)} bei 100 % Druck. Höhenraster aus swissALTI³D (2 m Quelldaten).`;
   }else{
-    const effective=plan.actualDpi,limit=plan.tiles.length>3200;
     const target=printPixels(l),p=choosePrintProduct(l.scale,mode),expected=expectedNativeDpi(l.scale,p.expectedGsd);
     if($('exportSource').value==='original'){
       $('quality').textContent=`${style?style.label+' · ':''}Originaldruck: ${l.dpi} dpi · ${format(target.width)} × ${format(target.height)} Pixel · ${format(target.blocks)} Blöcke. Quelle: ${p.description}. Erwartete Quellauflösung: ${format(expected)} dpi${mode==='luftbild'?' (SWISSIMAGE je nach Gebiet)':''}. ${expected+1<l.dpi?'Achtung: Quellendetails unter Druck-DPI, keine künstlichen Details!':''}`;
-    }else $('quality').textContent=`${style?style.label+' · ':''}WMTS-Schnelldruck: ${l.dpi} dpi PDF-Ziel · WMTS-Raster: ${plan.resolution} m/Pixel (≈ ${format(effective)} Quellen-dpi) · ${format(plan.tiles.length)} Kacheln${limit?' · zu viele für Browser':''}. Die WMTS-Bilder ersetzen die originalen Druckdaten NICHT.`;
+    }else if(style) $('quality').textContent=`${style.label} · WMS-Schnelldruck: ${l.dpi} dpi als PDF-Ausgaberaster. Kein Original-COG: WMS-Kartenbilder ersetzen die originalen 508-dpi-Druckdaten NICHT.`;
+    else {const effective=plan.actualDpi,limit=plan.tiles.length>3200;
+      $('quality').textContent=`WMTS-Schnelldruck: ${l.dpi} dpi PDF-Ziel · WMTS-Raster: ${plan.resolution} m/Pixel (≈ ${format(effective)} Quellen-dpi) · ${format(plan.tiles.length)} Kacheln${limit?' · zu viele für Browser':''}. Die WMTS-Bilder ersetzen die originalen Druckdaten NICHT.`;}
   }
 }
 function schedule(debounce=true){
@@ -198,7 +256,51 @@ function saveBlob(data,name,mime){
   a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),20000);
 }
 function fileStem(){return `CH_${cfg().paper}_${cfg().orientation}_1-${cfg().scale}_${Math.round(cfg().e)}-${Math.round(cfg().n)}`;}
+async function pdfWmsMap(l,signal){
+  const style=cartographyForScale(l.scale);
+  const total=printPixels(l),chunk=1024;
+  const cols=Math.ceil(total.width/chunk),rows=Math.ceil(total.height/chunk);
+  const blocks=cols*rows;
+  if(blocks>1200)throw new Error(`${blocks} WMS-Druckblöcke wären nötig. Bitte für grosse Formate Originaldruck oder geringere DPI wählen.`);
+  const pdf=freshPdf(l);
+  pdf.saveGraphicsState();pdf.rect(l.margin,l.margin,l.innerW,l.innerH,null);pdf.clip();pdf.discardPath();
+  let count=0;
+  for(let iy=0;iy<rows;iy++)for(let ix=0;ix<cols;ix++){
+      if(signal?.aborted)throw abortErr();
+      const x0=ix*chunk,y0=iy*chunk;
+      const w=Math.min(chunk,total.width-x0),h=Math.min(chunk,total.height-y0);
+      const bbox=printedBlockBounds(l,total,x0,y0,w,h);
+      const url=wmsGetMapUrl(style.wmts,bbox,w,h);
+      let response=null;
+      for(let attempt=0;attempt<3;attempt++){
+        try{
+          response=await fetch(url,{signal});
+          if(response.ok && (response.headers.get('content-type')||'').startsWith('image/'))break;
+          if(response.ok)throw new Error(`WMS lieferte statt einer Karte ${response.headers.get('content-type')||'unbekannten Inhalt'}.`);
+          if(attempt===2)throw new Error(`WMS HTTP ${response.status} bei Block ${ix+1}/${iy+1}.`);
+        }catch(e){if(signal.aborted)throw abortErr();if(attempt===2)throw e;}
+        await new Promise(resolve=>setTimeout(resolve,150*(attempt+1)));
+      }
+      if(!response?.ok)throw new Error('Kartenabruf fehlgeschlagen.');
+      const mime=response.headers.get('content-type')||'image/jpeg';
+      const bmp=await createImageBitmap(new Blob([await response.arrayBuffer()],{type:mime}));
+      const raw=document.createElement('canvas');raw.width=w;raw.height=h;
+      raw.getContext('2d').drawImage(bmp,0,0,w,h);bmp.close?.();
+      const out=colourizeBlock(raw,w,h,selectedRegion,l,total,x0,y0,mode);
+      const paperX=l.margin+x0/total.width*l.innerW,paperY=l.margin+y0/total.height*l.innerH;
+      const paperW=w/total.width*l.innerW,paperH=h/total.height*l.innerH;
+      pdf.addImage(out.toDataURL('image/jpeg',.97),'JPEG',paperX,paperY,paperW,paperH,undefined,'NONE');
+      count++;
+      if(count%3===0||count===blocks){
+        status(`WMS-Kartendruck ${style.label}: ${count}/${blocks} Bildblöcke …`);
+        await new Promise(resolve=>setTimeout(resolve,0));
+      }
+  }
+  pdf.restoreGraphicsState();addAttribution(pdf,l);
+  return pdf;
+}
 async function pdfMap(l,signal){
+  if(mode==='karte'||mode==='grau')return pdfWmsMap(l,signal);
   const plan=tilePlan(cfg());
   if(plan.tiles.length>3200)throw new Error(`Zu viele Kacheln (${plan.tiles.length}). Papierformat/Massstab kleiner oder Ausgabeziel niedriger wählen.`);
   const pdf=freshPdf(l);
