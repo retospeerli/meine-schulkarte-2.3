@@ -1,9 +1,10 @@
-import {PAPER,SOURCES,RESOLUTIONS,layout,tilePlan,resolutionZoom,tileSpan,enumerateTiles,tileUrl,toPaper} from './core.mjs';
+import {PAPER,SOURCES,RESOLUTIONS,layout,tilePlan,resolutionZoom,tileSpan,enumerateTiles,tileUrl,toPaper} from './core.mjs?v=2.5';
 import {getHeightGrid,newHeightGrid,estimatedHeightTileCount} from './heights.mjs';
 import {computeContours,svgForContours} from './contours.mjs';
-import {choosePrintProduct,expectedNativeDpi,printPixels} from './printdata.mjs';
-import {CANTONS,searchRegions,getRegionGeometry,getAdjacentLakeGeometry,fitRegion,applyGeometryPath,highlightParts} from './regions.mjs?v=2.4';
-import {createOriginalRasterPdf} from './rasterexport.mjs';
+import {choosePrintProduct,expectedNativeDpi,printPixels} from './printdata.mjs?v=2.5';
+import {cartographyForScale,cartographyDescription} from './cartography.mjs';
+import {CANTONS,searchRegions,getRegionGeometry,getAdjacentLakeGeometry,fitRegion,applyGeometryPath,highlightParts} from './regions.mjs?v=2.5';
+import {createOriginalRasterPdf} from './rasterexport.mjs?v=2.5';
 
 const $=id=>document.getElementById(id);
 const sheet=$('sheet'),canvas=$('preview'),ctx=canvas.getContext('2d');
@@ -82,7 +83,13 @@ function draw(){
   renderTimer=null;
   let l,plan;
   try {l=layout(cfg());plan=mode==='kontur'?null:tilePlan(cfg());}
-  catch(e){status(errorText(e),'error');return;}
+  catch(e){status(errorText(e),'error');$('cartographyInfo').textContent=errorText(e);$('quality').textContent='Keine massstabsgetreue Landeskarten-Ausgabe möglich.';return;}
+  const style=(mode==='karte'||mode==='grau')?cartographyForScale(l.scale):null;
+  $('cartographyInfo').hidden=!style;
+  if(style){
+    $('cartographyInfo').textContent=cartographyDescription(style);
+    $('cartographyInfo').classList.toggle('scale-warning',!style.exact);
+  }
   resizeSheet(l);renderFrame(l);
   if(mode==='kontur'){
     ctx.fillStyle='#fff';ctx.fillRect(l.margin,l.margin,l.innerW,l.innerH);
@@ -96,15 +103,17 @@ function draw(){
     let missing=0,loaded=0;
     ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
     for(const tile of tiles){
-      const [x,y]=toPaper(l,tile.minE,tile.maxN),k=`${mode}:${z}:${tile.x}:${tile.y}`;
-      const entry=previewTile(k,tileUrl(mode,z,tile.x,tile.y));
+      const [x,y]=toPaper(l,tile.minE,tile.maxN),k=`${mode}:${style?.wmts||SOURCES[mode].id}:${z}:${tile.x}:${tile.y}`;
+      const entry=previewTile(k,tileUrl(mode,z,tile.x,tile.y,l.scale));
       if(entry.state==='ready') {
-        if(selectedRegion && mode!=='grau'){
+        if((selectedRegion && mode!=='grau') || mode==='grau'){
           ctx.filter='grayscale(1)';
           ctx.drawImage(entry.img,x-.003,y-.003,size+.006,size+.006);
           ctx.filter='none';
-          ctx.fillStyle=`rgba(255,255,255,${MASK_LIGHTEN_ALPHA})`;
-          ctx.fillRect(x-.003,y-.003,size+.006,size+.006);
+          if(mode!=='grau'){
+            ctx.fillStyle=`rgba(255,255,255,${MASK_LIGHTEN_ALPHA})`;
+            ctx.fillRect(x-.003,y-.003,size+.006,size+.006);
+          }
         }else ctx.drawImage(entry.img,x-.003,y-.003,size+.006,size+.006);
         ctx.filter='none';loaded++;}
       else {missing++;ctx.fillStyle='#eaf0f6';ctx.fillRect(x,y,size,size);}
@@ -117,14 +126,14 @@ function draw(){
         applyGeometryPath(ctx,geometry,(e,n)=>toPaper(l,e,n));
         ctx.clip('evenodd');
         for(const tile of tiles){
-          const [x,y]=toPaper(l,tile.minE,tile.maxN),entry=cache.get(`${mode}:${z}:${tile.x}:${tile.y}`);
+          const [x,y]=toPaper(l,tile.minE,tile.maxN),entry=cache.get(`${mode}:${style?.wmts||SOURCES[mode].id}:${z}:${tile.x}:${tile.y}`);
           if(entry?.state==='ready')ctx.drawImage(entry.img,x-.003,y-.003,size+.006,size+.006);
         }
         ctx.restore();
       }
     }
-    if(missing&&missing===tiles.length&&tiles.every(t=>cache.get(`${mode}:${z}:${t.x}:${t.y}`)?.state==='error'))status('WMTS-Vorschau konnte nicht geladen werden. Internetzugang oder Zugriff auf swisstopo prüfen.','error');
-    $('tileText').textContent=`WMTS Vorschau: ${loaded}/${tiles.length} Kacheln · Zoom ${z}`;
+    if(missing&&missing===tiles.length&&tiles.every(t=>cache.get(`${mode}:${style?.wmts||SOURCES[mode].id}:${z}:${t.x}:${t.y}`)?.state==='error'))status('WMTS-Vorschau konnte nicht geladen werden. Internetzugang oder Zugriff auf swisstopo prüfen.','error');
+    $('tileText').textContent=`WMTS: ${loaded}/${tiles.length} Kacheln · ${style?.label||'SWISSIMAGE'} · Zoom ${z}`;
   }
   finishFrame(l);
   const n=mode==='kontur'?'Höhenlinien – swissALTI³D':SOURCES[mode].label;
@@ -139,8 +148,8 @@ function draw(){
     const effective=plan.actualDpi,limit=plan.tiles.length>3200;
     const target=printPixels(l),p=choosePrintProduct(l.scale,mode),expected=expectedNativeDpi(l.scale,p.expectedGsd);
     if($('exportSource').value==='original'){
-      $('quality').textContent=`Originaldruck: ${l.dpi} dpi · ${format(target.width)} × ${format(target.height)} Pixel · ${format(target.blocks)} Blöcke. Quelle: ${p.description}. Erwartete Quellauflösung: ${format(expected)} dpi${mode==='luftbild'?' (SWISSIMAGE je nach Gebiet)':''}. ${expected+1<l.dpi?'Achtung: Quellendetails unter Druck-DPI, keine künstlichen Details!':''}`;
-    }else $('quality').textContent=`WMTS-Schnelldruck: ${l.dpi} dpi PDF-Ziel · WMTS-Raster: ${plan.resolution} m/Pixel (≈ ${format(effective)} Quellen-dpi) · ${format(plan.tiles.length)} Kacheln${limit?' · zu viele für Browser':''}. Die WMTS-Bilder ersetzen die originalen Druckdaten NICHT.`;
+      $('quality').textContent=`${style?style.label+' · ':''}Originaldruck: ${l.dpi} dpi · ${format(target.width)} × ${format(target.height)} Pixel · ${format(target.blocks)} Blöcke. Quelle: ${p.description}. Erwartete Quellauflösung: ${format(expected)} dpi${mode==='luftbild'?' (SWISSIMAGE je nach Gebiet)':''}. ${expected+1<l.dpi?'Achtung: Quellendetails unter Druck-DPI, keine künstlichen Details!':''}`;
+    }else $('quality').textContent=`${style?style.label+' · ':''}WMTS-Schnelldruck: ${l.dpi} dpi PDF-Ziel · WMTS-Raster: ${plan.resolution} m/Pixel (≈ ${format(effective)} Quellen-dpi) · ${format(plan.tiles.length)} Kacheln${limit?' · zu viele für Browser':''}. Die WMTS-Bilder ersetzen die originalen Druckdaten NICHT.`;
   }
 }
 function schedule(debounce=true){
@@ -199,7 +208,7 @@ async function pdfMap(l,signal){
     if(signal.aborted)throw abortErr();
     const batch=plan.tiles.slice(index,index+6);
     const loaded=await Promise.all(batch.map(async tile=>{
-      const url=tileUrl(mode,plan.z,tile.x,tile.y);
+      const url=tileUrl(mode,plan.z,tile.x,tile.y,l.scale);
       let response=null;
       for(let attempt=0;attempt<3;attempt++){
         try{response=await fetch(url,{signal});if(response.ok)break;
@@ -212,17 +221,19 @@ async function pdfMap(l,signal){
     }));
     for(const {tile,buffer} of loaded){
       const [x,y]=toPaper(l,tile.minE,tile.maxN);
-      if(selectedRegion && mode!=='grau'){
+      if(selectedRegion || mode==='grau'){
         const bitmap=await createImageBitmap(new Blob([buffer],{type:'image/jpeg'}));
         const base=document.createElement('canvas');base.width=256;base.height=256;
         const bctx=base.getContext('2d');bctx.drawImage(bitmap,0,0,256,256);bitmap.close?.();
         const composited=document.createElement('canvas');composited.width=256;composited.height=256;
         const cctx=composited.getContext('2d');cctx.filter='grayscale(1)';cctx.drawImage(base,0,0);cctx.filter='none';
-        cctx.fillStyle=`rgba(255,255,255,${MASK_LIGHTEN_ALPHA})`;cctx.fillRect(0,0,256,256);
-        for(const geometry of highlightParts(selectedRegion)){
-          cctx.save();
-          applyGeometryPath(cctx,geometry,(e,n)=>[(e-tile.minE)/plan.resolution,(tile.maxN-n)/plan.resolution]);
-          cctx.clip('evenodd');cctx.drawImage(base,0,0);cctx.restore();
+        if(selectedRegion && mode!=='grau'){
+          cctx.fillStyle=`rgba(255,255,255,${MASK_LIGHTEN_ALPHA})`;cctx.fillRect(0,0,256,256);
+          for(const geometry of highlightParts(selectedRegion)){
+            cctx.save();
+            applyGeometryPath(cctx,geometry,(e,n)=>[(e-tile.minE)/plan.resolution,(tile.maxN-n)/plan.resolution]);
+            cctx.clip('evenodd');cctx.drawImage(base,0,0);cctx.restore();
+          }
         }
         pdf.addImage(composited.toDataURL('image/jpeg',.97),'JPEG',x,y,size,size,undefined,'FAST');
       }else pdf.addImage(buffer,'JPEG',x,y,size,size,undefined,'FAST');
@@ -418,8 +429,8 @@ for(const btn of document.querySelectorAll('#scales button'))btn.addEventListene
 $('findPlace').addEventListener('click',searchPlace);
 $('searchText').addEventListener('keydown',e=>{if(e.key==='Enter')searchPlace();});
 $('resetCenter').addEventListener('click',()=>{$('east').value=2693000;$('north').value=1231000;invalidateContours();schedule();});
-$('zoomIn').addEventListener('click',()=>{$('scale').value=Math.max(100,Math.round(cfg().scale/1.5/100)*100);invalidateContours();schedule();});
-$('zoomOut').addEventListener('click',()=>{$('scale').value=Math.min(2500000,Math.round(cfg().scale*1.5/100)*100);invalidateContours();schedule();});
+$('zoomIn').addEventListener('click',()=>{$('scale').value=Math.max((mode==='karte'||mode==='grau')?10000:100,Math.round(cfg().scale/1.5/100)*100);invalidateContours();schedule();});
+$('zoomOut').addEventListener('click',()=>{$('scale').value=Math.min((mode==='karte'||mode==='grau')?1000000:2500000,Math.round(cfg().scale*1.5/100)*100);invalidateContours();schedule();});
 $('makeContours').addEventListener('click',()=>runTask(prepareContours));
 $('pdfButton').addEventListener('click',downloadPdf);
 $('svgAll').addEventListener('click',downloadSvg);
@@ -436,6 +447,6 @@ canvas.addEventListener('pointermove',e=>{
   invalidateContours();schedule(false);
 });
 for(const event of ['pointerup','pointercancel'])canvas.addEventListener(event,()=>drag=null);
-canvas.addEventListener('wheel',e=>{e.preventDefault();$('scale').value=Math.max(100,Math.min(2500000,Math.round(cfg().scale*(e.deltaY>0?1.18:1/1.18)/100)*100));invalidateContours();schedule();},{passive:false});
+canvas.addEventListener('wheel',e=>{e.preventDefault();$('scale').value=Math.max((mode==='karte'||mode==='grau')?10000:100,Math.min((mode==='karte'||mode==='grau')?1000000:2500000,Math.round(cfg().scale*(e.deltaY>0?1.18:1/1.18)/100)*100));invalidateContours();schedule();},{passive:false});
 window.addEventListener('resize',()=>schedule());
 schedule(false);

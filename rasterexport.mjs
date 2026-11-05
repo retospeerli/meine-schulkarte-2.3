@@ -1,5 +1,5 @@
 import {toPaper} from './core.mjs';
-import {choosePrintProduct,discoverPrintAssets,printPixels,expectedNativeDpi,verifyTileCoverage} from './printdata.mjs';
+import {choosePrintProduct,discoverPrintAssets,printPixels,expectedNativeDpi,verifyTileCoverage} from './printdata.mjs?v=2.5';
 import {applyGeometryPath,highlightParts} from './regions.mjs';
 const MASK_LIGHTEN_ALPHA=.26;
 
@@ -98,6 +98,14 @@ export async function createOriginalRasterPdf(l,mode,region,localFiles,{signal,o
       throw new Error('GeoTIFF muss in CH1903+/LV95 (EPSG:2056) georeferenziert sein.');
     const nativeX=(bb[2]-bb[0])/image.getWidth(),nativeY=(bb[3]-bb[1])/image.getHeight();
     if(nativeX<=0||nativeY<=0)throw new Error('GeoTIFF besitzt ungültige Pixelauflösung.');
+    // A user-supplied TIFF may depict the *wrong* national map series.
+    // Check native 508dpi swisstopo pixel spacing (e.g. SMR25 = 1.25m).
+    // Unlike output PDF dpi, this validates the underlying cartography.
+    if(mode==='karte'||mode==='grau'){
+      const expected=product.scale/20000;
+      if(Math.abs(nativeX/expected-1)>.06 || Math.abs(nativeY/expected-1)>.06)
+        throw new Error(`Die GeoTIFF-Quelle hat ${nativeX.toFixed(3)} × ${nativeY.toFixed(3)} m/Pixel, erwartet werden ca. ${expected} m/Pixel für Landeskarte 1:${product.scale.toLocaleString('de-CH')}. Keine fremde Kartenserie als normgerechten Druck ausgeben.`);
+    }
     nativeDpi=Math.min(nativeDpi,expectedNativeDpi(l.scale,Math.max(nativeX,nativeY)));
     return {image,tif,bb,bounds:sourceBounds(bb),nativeX,nativeY,asset};
   };

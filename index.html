@@ -10,10 +10,10 @@
 <script defer src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
-<script type="module" src="./app.js?v=2.4"></script>
+<script type="module" src="./app.js?v=2.5"></script>
 </head>
 <body>
-<header class="topbar"><div class="brand"><span class="mark">CH</span><div><strong>Schweizer Kartengenerator</strong><small>Landeskarten · Luftbilder · Kartonreliefs</small></div></div><span class="version">Version 2.4 · GitHub Pages</span></header>
+<header class="topbar"><div class="brand"><span class="mark">CH</span><div><strong>Schweizer Kartengenerator</strong><small>Landeskarten · Luftbilder · Kartonreliefs</small></div></div><span class="version">Version 2.5 · GitHub Pages</span></header>
 <main class="shell">
 <aside class="settings">
   <section><h2><span class="step">1</span> Kartentyp</h2>
@@ -44,7 +44,8 @@
     <div class="two"><label>DIN-Format<select id="paper"><option>A5</option><option selected>A4</option><option>A3</option><option>A2</option><option>A1</option><option>A0</option></select></label>
       <label>Ausrichtung<select id="orientation"><option value="quer" selected>Querformat</option><option value="hoch">Hochformat</option></select></label></div>
     <label>Massstab 1 : <input id="scale" type="number" min="100" max="2500000" step="100" value="25000"></label>
-    <div class="chips" id="scales"><button data-scale="5000">5'000</button><button data-scale="10000">10'000</button><button class="picked" data-scale="25000">25'000</button><button data-scale="50000">50'000</button><button data-scale="100000">100'000</button></div>
+    <div class="chips" id="scales"><button data-scale="10000">10'000</button><button class="picked" data-scale="25000">25'000</button><button data-scale="50000">50'000</button><button data-scale="100000">100'000</button><button data-scale="200000">200'000</button><button data-scale="500000">500'000</button><button data-scale="1000000">1 Mio.</button></div>
+    <p class="hint" id="cartographyInfo" aria-live="polite">Landeskarte 1:25'000 · amtlicher Kartenstandard.</p>
     <div class="two"><label>Rand in mm<input id="margin" type="number" min="0" max="50" step="1" value="5"></label><label>Druckauflösung<select id="dpi"><option>300</option><option>400</option><option selected>508</option><option>600</option></select></label></div>
   </section>
   <section id="contourSettings" hidden><h2><span class="step">5</span> Höhenlinien für Graukarton</h2>
@@ -77,6 +78,7 @@
   <div class="status-row"><div><strong id="extentText">–</strong><small id="detailText">LV95 · EPSG:2056</small></div><div><strong id="paperText">–</strong><small id="tileText">–</small></div></div>
   <div class="messages" id="messages" role="status" aria-live="polite">Bereit.</div>
   <details class="info"><summary>Hinweise zur Genauigkeit, swisstopo und Papierreliefs</summary>
+    <p><strong>Kartenmassstab und kartografische Norm:</strong> Für Landeskarten werden durchgängig die offiziellen Swiss-Map-Raster-Serien 10, 25, 50, 100, 200, 500 oder 1000 verwendet. Die Vorschau und der schnelle WMTS-Druck verwenden den expliziten massstabsgebundenen Layer, der Originaldruck dasselbe Kartenwerk als hochaufgelöstes GeoTIFF. Bei freien Zwischenmassstäben bleibt der Druckmassstab exakt, aber Beschriftungen und Signaturen sind gegenüber dem Nennmassstab der nächstgeeigneten offiziellen Kartenserie vergrössert oder verkleinert. Die App weist diese Abweichung aus. Ausserhalb 1:10'000 bis 1:1'000'000 ist eine normgerechte Landeskarte nicht möglich; Luftbilder/Höhenlinien bleiben frei skalierbar.</p>
     <p>Die Vorschau verwendet WMTS. Der Standarddruckexport verwendet dagegen die originalen Swiss Map Raster-GeoTIFFs (KREL) bzw. SWISSIMAGE-COGs, in 512-Pixel-Blöcken auf einer PDF-Seite im exakt gewählten DIN-Format. Die Originalkarten haben bei ihrer jeweiligen Nennmassstäblichkeit 508 dpi. Bei abweichendem Druckmassstab kann die effektive Quellenauflösung davon abweichen. A0/508 dpi ist daten- und speicherintensiv und benötigt einen leistungsfähigen Desktop-Browser. Der alternative WMTS-Export besitzt keine garantierte 508-dpi-Quellenqualität.</p>
     <p>Der Auswahlmodus verwendet die amtliche Polygongeometrie von swissBOUNDARIES3D (LV95). Vollfarbe innerhalb des Kantons bzw. der politischen Gemeinde, ausserhalb heller Graustufen; Löcher in den Grenzpolygonen werden berücksichtigt. Bei Gemeinden werden angrenzende Seen anhand amtlicher Seeflächen (BAFU/VECTOR25) und, soweit verfügbar, swissTLM3D-Geometrien zusätzlich farbig hervorgehoben. Die Polygone werden in separaten Durchgängen kombiniert, damit Überlappungen nicht fälschlich ausgegraut werden. Die VECTOR25-Seeflächen sind älter als die aktuelle swissTLM3D-Karte; für Drucke mit vermessungstechnischer Anforderung Seeumrisse prüfen. Die Maskierung wird in der Druckausgabe angewendet.</p>
     <p>Im Höhenlinienmodus werden Höhenlinien aus swissALTI³D und nicht aus farbigen Kartenbildern abgeleitet. SVG und PDF sind Vektorausgaben; im ZIP liegt pro Höhenstufe eine eigene SVG-Datei. Randberührende Konturen können offen sein; sie sind keine automatisch geschlossenen CAD-Schnittpolygone. Für Schichtreliefs sind die Linien als Schnitt-/Sägeschablonen bestimmt.</p>

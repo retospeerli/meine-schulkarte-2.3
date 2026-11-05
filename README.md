@@ -1,4 +1,4 @@
-# Schweizer Kartengenerator – Version 2.4
+# Schweizer Kartengenerator – Version 2.5
 
 Statische Webanwendung für **GitHub Pages**, ohne Backend, von Reto Speerli. Drei Betriebsarten: Landeskarte, SWISSIMAGE-Luftbild, Höhenlinien für Graukarton-Schichtreliefs. Zusätzliche Farbmaske für **politische Gemeinden oder Kantone**.
 
@@ -12,18 +12,27 @@ Lokal testen: `python3 -m http.server 8000` im Ordner starten, dann `http://loca
 
 Der **Standardexport** nutzt originalgetreue **Swiss Map Raster**-GeoTIFFs über den swisstopo-STAC-Dienst, nicht die kleine WMTS-Kachelpyramide. Quelle ist die **KREL**-Farbkombination mit Relief.
 
-Automatische Zuordnung (Nennmassstab der Quelle <= gewählter Druckmassstab):
+**Kartografisch massstabsgebundene Datenquellen, identisch in Vorschau und Druck:**
 
-- bis 1:24'999: Swiss Map Raster 10 (1:10'000)
-- ab 1:25'000: Swiss Map Raster 25
-- ab 1:50'000: Swiss Map Raster 50
-- ab 1:100'000: Swiss Map Raster 100
-- ab 1:200'000: Swiss Map Raster 200
-- ab 1:500'000: Swiss Map Raster 500
+| Gewählter Massstab | Kartenserie | Vorschau + WMTS | 508-dpi-Originaldruck |
+|---|---|---|---|
+| 1:10'000 | SMR10 | `ch.swisstopo.landeskarte-farbe-10` | `ch.swisstopo.landeskarte-farbe-10` |
+| 1:25'000 | SMR25 | `ch.swisstopo.pixelkarte-farbe-pk25.noscale` | dieselbe STAC-Collection |
+| 1:50'000 | SMR50 | `ch.swisstopo.pixelkarte-farbe-pk50.noscale` | dieselbe STAC-Collection |
+| 1:100'000 | SMR100 | `ch.swisstopo.pixelkarte-farbe-pk100.noscale` | dieselbe STAC-Collection |
+| 1:200'000 | SMR200 | `ch.swisstopo.pixelkarte-farbe-pk200.noscale` | dieselbe STAC-Collection |
+| 1:500'000 | SMR500 | `ch.swisstopo.pixelkarte-farbe-pk500.noscale` | dieselbe STAC-Collection |
+| 1:1'000'000 | SMR1000 | `ch.swisstopo.pixelkarte-farbe-pk1000.noscale` | dieselbe STAC-Collection |
+
+Die App nutzt nun **nie** den automatisch umschaltenden Sammellayer `ch.swisstopo.pixelkarte-farbe` für Landeskarte oder Karte grau. Die **Original-Kartengrafik** (Schrift, Signaturen, Selektions- und Generalisierungsregeln) stammt bei den offiziellen Massstäben aus derselben nationalen Kartenserie. Die Graukarte wird aus derselben Kartengrafik in Graustufen ausgegeben.
+
+Bei einem frei gewählten **Zwischenmassstab** (z. B. 1:40'000) wird die nächstgeeignete amtliche Karte (hier SMR50) für die exakte Druckgeometrie im gewünschten Massstab skaliert. Das ist **keine neue amtliche Kartengrafik** – die App zeigt Produkt und Vergrösserung in Prozent offen an. Eine amtliche Ausgabe mit exakt passenden Beschriftungen/Signaturen ist deshalb nur bei den sieben offiziell unterstützten Massstäben möglich. Für Landeskarten ausserhalb 1:10'000 bis 1:1'000'000 gibt die App eine Fehlermeldung statt eine falsche Normqualität aus; Luftbilder/Höhenlinien bleiben auch ausserhalb dieses Bereichs frei skalierbar.
+
+Die Vorschau wird aus dem expliziten WMTS-Layer gerendert. Die normgetreuen Druckdaten stammen als `KREL`-TIFF aus dem jeweils gleichen Kartenprodukt. Lokal zugefügte TIFFs müssen die zur Karte passende native Bodenpixelweite (508 dpi im Nennmassstab) aufweisen; andernfalls wird die Ausgabe abgebrochen. Der WMTS-Schnell-PDF-Export bleibt ein qualitativ niedrigeres Verfahren und **kein** Ersatz für das GeoTIFF-Druck-PDF.
 
 Beim Luftbildmodus: **SWISSIMAGE-Original-COGs** (10 cm Bodenauflösung, regional ältere/geringere Originaldetailauflösung; der tatsächliche Pixelabstand wird gelesen).
 
-508 dpi ist **Voreinstellung für das Ausgaberaster**. Die Original-Swiss-Map-Raster-GeoTIFFs besitzen 508 dpi **bei ihrem jeweiligen Nennmassstab**. Bei beliebig eingegebenen Druckmassstäben ist die *effektive Quellen-DPI* anders. Beispiel: Swiss Map Raster 25 im Druckmassstab 1:25'000 = 508 Original-dpi; im Massstab 1:20'000 wäre SMR25 nur 406 dpi und wird daher automatisch SMR10 gewählt (falls verfügbar). Die App zeigt nach dem Lesen der TIFF-Metadaten die tatsächliche Quellenauflösung an. **Ausgabe-DPI bedeutet nicht zusätzliche Quelldetails.**
+508 dpi ist **Voreinstellung für das Ausgaberaster**. Die Original-Swiss-Map-Raster-GeoTIFFs besitzen 508 dpi **bei ihrem jeweiligen Nennmassstab**. Bei beliebig eingegebenen Druckmassstäben ist die *effektive Quellen-DPI* anders. Beispiel: Swiss Map Raster 25 im Druckmassstab 1:25'000 = 508 Original-dpi; im nicht-amtlichen Zwischenmassstab 1:20'000 wäre SMR25 vergrössert und hätte ca. 406 effektive Quelldpi. Die App zeigt nach dem Lesen der TIFF-Metadaten die tatsächliche Quellenauflösung an. **Ausgabe-DPI bedeutet nicht zusätzliche Quelldetails.**
 
 DIN A5, A4, A3, A2, A1, A0, hoch/quer, freier Massstab und Rand. Die App berechnet exakt georeferenzierte PDF-Bildkacheln von maximal 512 × 512 Pixel. Die PDF-Seite selbst ist auf die Originalmasse in Millimetern eingestellt. **Beim Drucken 100 % / tatsächliche Grösse** ohne Skalierung wählen.
 
@@ -102,3 +111,8 @@ Daten: **© swisstopo**, Nutzungsbedingungen: <https://www.swisstopo.admin.ch/de
 - Prüffall Wädenswil: Zürichsee und Hüttnersee als zwei separate farbige Seeflächen. Tests mit simulierten API-Antworten, kein Live-Test der swisstopo-API.
 
 **Hinweis zur Genauigkeit:** Der BAFU-Seeflächenlayer verwendet VECTOR25-Geometrien mit Datenstand 2007. Für allerhöchste Seeuferpräzision wird eine Aktualisierung auf aktuelle swissTLM3D-Bodenbedeckungs-Polygone benötigt; die aktuelle Browser-API liefert nicht in allen Fällen diese Flächen als einzelne Geometrien. Diese Version versucht keinen künstlichen Farbflächenersatz.
+
+
+## Version 2.5 – Kartografische Generalisierung passend zum Ausgabemassstab
+
+Die Landeskarten erhalten statt der automatisch skalierten GeoAdmin-Sammelkarte je eine feste Kartenserie für Vorschau, WMTS-PDF und Originaldruck. Sieben offizielle Massstäbe werden berücksichtigt, freie Zwischenmassstäbe mit transparenter Kennzeichnung ihrer Ausgangskarte und Bildskalierung. Bei massstabsfremden lokalen GeoTIFFs bricht der Originaldruck ab. Graukarten verwenden dieselbe kartografische Serie in Graustufen. Gemeinde-/Kantonshervorhebung, See-Erkennung, Luftbild- und Höhenlinienmodus bleiben erhalten.

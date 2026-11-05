@@ -1,20 +1,13 @@
 /** Official high-resolution swisstopo STAC GeoTIFF product discovery, EPSG:2056. */
 import {stacBbox} from './core.mjs';
+import {cartographyForScale,OFFICIAL_MAP_SERIES} from './cartography.mjs';
 
-export const MAP_SERIES = Object.freeze([
-  {scale:10000,collection:'ch.swisstopo.landeskarte-farbe-10'},
-  {scale:25000,collection:'ch.swisstopo.pixelkarte-farbe-pk25.noscale'},
-  {scale:50000,collection:'ch.swisstopo.pixelkarte-farbe-pk50.noscale'},
-  {scale:100000,collection:'ch.swisstopo.pixelkarte-farbe-pk100.noscale'},
-  {scale:200000,collection:'ch.swisstopo.pixelkarte-farbe-pk200.noscale'},
-  {scale:500000,collection:'ch.swisstopo.pixelkarte-farbe-pk500.noscale'}
-]);
+export const MAP_SERIES=OFFICIAL_MAP_SERIES;
 export const ORTHO_COLLECTION='ch.swisstopo.swissimage-dop10';
 export function choosePrintProduct(scale,mode='karte'){
   if(mode==='luftbild')return {collection:ORTHO_COLLECTION,scale:null,expectedGsd:.1,description:'SWISSIMAGE Orthofoto (10 cm / regional 25 cm)'};
-  let selection=MAP_SERIES[0];
-  for(const series of MAP_SERIES)if(series.scale<=Number(scale))selection=series;
-  return {...selection,expectedGsd:selection.scale/20000,description:`Swiss Map Raster 1:${selection.scale.toLocaleString('de-CH')} (508 dpi in Originalgrösse)`};
+  const chosen=cartographyForScale(scale);
+  return {...chosen,expectedGsd:chosen.scale/20000,description:`Swiss Map Raster 1:${chosen.scale.toLocaleString('de-CH')} (508 dpi im Nennmassstab)`};
 }
 export function expectedNativeDpi(scale,sourceGsd){return Number(scale)*.0254/sourceGsd;}
 export function selectPrintAssets(features,{mode='karte',collection='',preferMeters=.1}={}){
@@ -39,7 +32,7 @@ export function selectPrintAssets(features,{mode='karte',collection='',preferMet
         // Only KREL is the relief-bearing coloured Swiss Map print sheet.
         if(!/(?:^|[_-])krel(?:[_\-.]|$)/i.test(lower))continue;
         if(/preview|thumbnail|overview/i.test(lower))continue;
-        const gsd=Number(a.gsd||path.match(/(?:_|-)(0\.5|1\.25|2\.5|5|10|25)(?=\.tiff?$)/)?.[1]);
+        const gsd=Number(a.gsd||path.match(/(?:_|-)(0\.5|1\.25|2\.5|5|10|25|50)(?=\.tiff?$)/)?.[1]);
         const key=path.replace(/([-_])20\d{2}(?=[_-])/,'$1YEAR');
         all.push({href,year,gsd,key,itemId:item.id});
       }
